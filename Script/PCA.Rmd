@@ -1,0 +1,86 @@
+---
+title: "GR5261Project"
+author: "Zhanhao Zhang"
+date: "3/23/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load Data
+```{r}
+library(data.table)
+
+data <- fread("../Data/SP500_Historical_Prices.csv", header = T, sep = ",") %>%
+  data.frame()
+head(data)
+```
+
+Reshape the data
+```{r}
+reshape_to_wide <- function(date_range = c(min(data$date), max(data$date)), 
+                            colname = "close", ticker_range = data$ticker){
+  tickers <- ticker_range %>% unique() %>% as.character()
+  if(TRUE){ #length(tickers) <= 2){
+    df_ret <- NULL
+    for(symbol in tickers){
+      df_curr <- data[(data$ticker == symbol) & (data$date >= date_range[1]) &
+                         (data$date <= date_range[2]), c("date", colname)]
+      colnames(df_curr) <- c("date", paste(symbol, colname, sep = "."))
+      if(is.null(df_ret)){
+        df_ret <- df_curr
+      } else{
+        df_ret <- merge(df_ret, df_curr, by = "date")
+      }
+    }
+  } else{
+    mid <- as.integer(length(tickers) / 2)
+    df_left <- reshape_to_wide(date_range = date_range, colname = colname,
+                               ticker_range = tickers[1:mid])
+    df_right <- reshape_to_wide(date_range = date_range, colname = colname,
+                               ticker_range = tickers[(mid+1):length(tickers)])
+    df_ret <- merge(df_left, df_right, by = "date")
+  }
+  return(df_ret)
+}
+
+data_wide <- reshape_to_wide()
+data_wide %>% head()
+```
+
+PCA
+```{r}
+pca <- prcomp(data_wide[, 2:100])
+print(summary(pca)$importance[,1:10])
+plot(pca)
+```
+Loadings
+```{r}
+print("PC1")
+print(pca$rotation[,1])
+print("PC2")
+print(pca$rotation[,2])
+```
+
+Extract portfolio
+```{r}
+extract_portfolio <- function(pc, data){
+  data_mat <- data[, colnames(data) != "date"] %>% as.matrix()
+  price <- data_mat %*% matrix(pc, ncol = 1)
+  net_ret <- price / price[1] - 1
+  df <- data.frame(Date = data$date, NetReturn = net_ret)
+  df$Date <- as.character(df$Date)
+  return(df)
+}
+portfolio_pc1 <- extract_portfolio(pca$rotation[,1], data_wide[, 1:100])
+plot(as.Date(portfolio_pc1$Date, "%Y-%m-%d"), 
+     portfolio_pc1$NetReturn, type = "l", xlab = "Date", 
+     ylab = "Net Return", main = "Net Return of PC1 Portfolio")
+portfolio_pc2 <- extract_portfolio(pca$rotation[,2], data_wide[, 1:100])
+plot(as.Date(portfolio_pc2$Date, "%Y-%m-%d"), 
+     portfolio_pc2$NetReturn, type = "l", xlab = "Date", 
+     ylab = "Net Return", main = "Net Return of PC2 Portfolio")
+```
+
