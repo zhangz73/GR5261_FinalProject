@@ -21,7 +21,8 @@ head(data)
 Reshape the data
 ```{r}
 reshape_to_wide <- function(date_range = c(min(data$date), max(data$date)), 
-                            colname = "close", ticker_range = data$ticker){
+                            colname = "close", ticker_range = data$ticker,
+                            min_date = "2017-01-01"){
   tickers <- ticker_range %>% unique() %>% as.character()
   if(TRUE){ #length(tickers) <= 2){
     df_ret <- NULL
@@ -29,10 +30,12 @@ reshape_to_wide <- function(date_range = c(min(data$date), max(data$date)),
       df_curr <- data[(data$ticker == symbol) & (data$date >= date_range[1]) &
                          (data$date <= date_range[2]), c("date", colname)]
       colnames(df_curr) <- c("date", paste(symbol, colname, sep = "."))
-      if(is.null(df_ret)){
-        df_ret <- df_curr
-      } else{
-        df_ret <- merge(df_ret, df_curr, by = "date")
+      if(min(df_curr$date) <= min_date){
+        if(is.null(df_ret)){
+          df_ret <- df_curr
+        } else{
+          df_ret <- merge(df_ret, df_curr, by = "date")
+        }
       }
     }
   } else{
@@ -52,7 +55,7 @@ data_wide %>% head()
 
 PCA
 ```{r}
-pca <- prcomp(data_wide[, 2:100])
+pca <- prcomp(data_wide[data_wide$date < "2018-01-01", 2:100])
 print(summary(pca)$importance[,1:10])
 plot(pca)
 ```
@@ -82,5 +85,100 @@ portfolio_pc2 <- extract_portfolio(pca$rotation[,2], data_wide[, 1:100])
 plot(as.Date(portfolio_pc2$Date, "%Y-%m-%d"), 
      portfolio_pc2$NetReturn, type = "l", xlab = "Date", 
      ylab = "Net Return", main = "Net Return of PC2 Portfolio")
+```
+
+Sliding Window
+```{r}
+year_list <- 2018:2021
+cash <- 100
+
+extract_portfolio <- function(pc_12, pc_weights, data){
+  pc <- pc_12[,1] * pc_weights[1] + pc_12[,2] * pc_weights[2]
+  data_mat <- data[, colnames(data) != "date"] %>% as.matrix()
+  price <- data_mat %*% matrix(pc, ncol = 1)
+  if(price[1] < 0){
+    price <- -1 * price
+  }
+  price <- price * 100 / price[1]
+  df <- data.frame(Date = data$date, Price = price)
+  df$Date <- as.character(df$Date)
+  return(df)
+}
+
+get_sliding_portfolio <- function(){
+  cash_list <- c(0)
+  equity_list <- c(0)
+  portfolio_list <- c()
+  date_list <- c()
+  for(year in year_list){
+    start_date <- paste0(year - 1, "-01-01")
+    end_date <- paste0(year, "-01-01")
+    future_date <- paste0(year + 1, "-01-01")
+    if(year == max(year_list)){
+      future_date <- max(data_wide$date)
+    }
+    data_curr <- data_wide[(data_wide$date < end_date) & 
+                             (data_wide$date >= start_date),]
+    data_future <- data_wide[(data_wide$date < future_date) & 
+                               (data_wide$date >= end_date),]
+    pca_1year <- prcomp(data_curr[, 2:ncol(data_curr)])
+    stocks_combo <- extract_portfolio(pca_1year$rotation[,1:2], 
+                                      pca_1year$sdev^2 / sum(pca_1year$sdev^2),
+                                      data_future)
+    
+    if(stocks_combo$Price[1] < 0){
+      stocks_combo$Price <- -1 * stocks_combo$Price
+    }
+    cash_curr <- cash_list[length(cash_list)] + 
+      equity_list[length(equity_list)] - stocks_combo$Price[1]
+    cash_list <- c(cash_list, rep(cash_curr, nrow(stocks_combo)))
+    equity_list <- c(equity_list, stocks_combo$Price)
+    date_list <- c(date_list, stocks_combo$Date)
+  }
+  cash_list <- cash_list[2:length(cash_list)]
+  equity_list <- equity_list[2:length(equity_list)]
+  portfolio_list <- cash_list + equity_list
+  return(data.frame(date = date_list, portfolio = portfolio_list,
+                    cash = cash_list, equity = equity_list))
+}
+df <- get_sliding_portfolio()
+#df <- df[as.character(df$date) <= "2020-01-01",]
+plot(as.Date(df$date, "%Y-%m-%d"), 
+     df$portfolio, type = "l", xlab = "Date", 
+     ylab = "Portfolio Value", main = "Portfolio Value using PCA",
+     col = "red")
+plot(as.Date(df$date, "%Y-%m-%d"), 
+     df$equity, type = "l", xlab = "Date", 
+     ylab = "Equity Net Returns", main = "Equity Net Returns using PCA",
+     col = "green")
+#lines(as.Date(df$date, "%Y-%m-%d"), df$cash, col="yellow")
+#lines(as.Date(df$date, "%Y-%m-%d"), df$equity, col="blue")
+#legend("topleft", c("Portfolio", "Cash", "Equity"), 
+ #      col=c("red", "yellow", "blue"), lwd=3, bg="gray", cex=0.6)
+```
+
+Min Correlation Community
+```{r}
+library(stringr)
+
+get_min_corr_community <- function(cor_matrix, size=20){
+  cor_matrix <- abs(cor_matrix)
+  n <- nrow(cor_matrix)
+  tickers <- str_remove(rownames(cor_matrix), ".close")
+  rownames(cor_matrix) <- tickers
+  colnames(cor_matrix) <- tickers
+  min_pair_idx <- which.min(cor_matrix)
+  cluster <- c(tickers[min_pair_idx %% n], 
+               tickers[as.integer((min_pair_idx - 1) / n) + 1])
+  for(i in 3:size){
+    cluster_corr <- apply(cor_matrix[cluster,], 2, max)
+    min_stock_idx <- which.min(cluster_corr)
+    min_stock <- tickers[min_stock_idx]
+    cluster <- c(cluster, min_stock)
+  }
+  return(cluster)
+}
+cor_matrix <- cor(data_wide[,2:ncol(data_wide)])
+get_min_corr_community(cor_matrix, size=20)
 ```
 
