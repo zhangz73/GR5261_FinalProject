@@ -1,0 +1,184 @@
+---
+title: "sector_weights_part"
+author: "yucen"
+date: "3/22/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+# Import sector weight data
+file <- read.csv("sector representation.csv", header = TRUE, stringsAsFactors = FALSE)
+data <- file[4:14,c(1,2,12,13,14,15,16)]
+colnames(data) <- c("sectors",file[3,c(2,12,13,14,15,16)]) #c("2/26/2021","2020","2019","2018","2017","2016")
+rownames(data) <- c(1:11)
+```
+
+
+```{r}
+library(tidyverse)
+# Convert time into a single column in order to make plots
+df <- data %>%
+  pivot_longer(cols = !sectors, names_to = "time",                values_to = "sector_weights")
+
+df$sector_weights <- substr(df$sector_weights,1,nchar(df$sector_weights)-1)
+df$sector_weights <- as.numeric(df$sector_weights)
+df$time <- factor(df$time, levels = c("2016","2017","2018","2019","2020","2/26/2021"))
+
+# Plot of sector weights vs. time
+ggplot(data=df,aes(y=sector_weights,x=time,color=sectors,group=sectors))+
+  geom_point()+
+  geom_line()+
+  labs(x = "Time(year)", y = "Sector Weights(%)", title = "Sector Weights from 2016 to 2021")
+```
+
+```{r}
+# Create portfolio according to the sector weights
+
+# Calculate average sector weights from 2016 to 2021
+library(dplyr)
+df %>%
+  group_by(sectors) %>%
+  summarize(mean_weight = mean(sector_weights),.groups = 'drop')
+
+```
+
+
+```{r}
+# Import SP500 historical price
+SP_500 <- read.csv("SP500_Historical_Prices.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# function to reshape the SP_500 data
+reshape_to_wide <- function(date_range = c(min(SP_500$date), max(SP_500$date)), 
+                            colname = "close", ticker_range = SP_500$ticker,
+                            min_date = "2017-01-01"){
+  tickers <- ticker_range %>% unique() %>% as.character()
+  if(TRUE){ #length(tickers) <= 2){
+    df_ret <- NULL
+    for(symbol in tickers){
+      df_curr <- SP_500[(SP_500$ticker == symbol) & (SP_500$date >= date_range[1]) &
+                         (SP_500$date <= date_range[2]), c("date", colname)]
+      colnames(df_curr) <- c("date", paste(symbol, colname, sep = "."))
+      if(min(df_curr$date) <= min_date){
+        if(is.null(df_ret)){
+          df_ret <- df_curr
+        } else{
+          df_ret <- merge(df_ret, df_curr, by = "date")
+        }
+      }
+    }
+  } else{
+    mid <- as.integer(length(tickers) / 2)
+    df_left <- reshape_to_wide(date_range = date_range, colname = colname,
+                               ticker_range = tickers[1:mid])
+    df_right <- reshape_to_wide(date_range = date_range, colname = colname,
+                               ticker_range = tickers[(mid+1):length(tickers)])
+    df_ret <- merge(df_left, df_right, by = "date")
+  }
+  return(df_ret)
+}
+
+SP_500_reshape  <- reshape_to_wide()
+SP_500_reshape  %>% head()
+```
+
+```{r}
+get_index <- function(date_range = c("2016-11-10", "2021-03-09"), ticker_range = c("A.close","AAL.close")){
+  rows <- c(as.numeric(rownames(SP_500_reshape[(SP_500_reshape$date == date_range[1]),])),
+            as.numeric(rownames(SP_500_reshape[(SP_500_reshape$date == date_range[-1]),])))
+  cols <- c(which(colnames(SP_500_reshape) == ticker_range[1]), 
+            which(colnames(SP_500_reshape) == ticker_range[-1]))
+  return(list(rows=rows,
+              cols=cols))
+}
+get_index()
+```
+
+
+```{r}
+# calculate sharpe ratio
+cal_sharpe <- function(date_range = c("2016-11-10", "2021-03-09"), ticker_range = c("A.close","AAL.close"), risk_free_rate = 0.01){
+    min_date_row <- get_index(date_range,ticker_range)$rows[1]
+    max_date_row <- get_index(date_range,ticker_range)$rows[2]
+    min_ticker_col <- get_index(date_range,ticker_range)$cols[1]
+    max_ticker_col <- get_index(date_range,ticker_range)$cols[2]
+    daily_return <-
+      (SP_500_reshape[(min_date_row+1):max_date_row, min_ticker_col:max_ticker_col] / SP_500_reshape[min_date_row:(max_date_row-1), min_ticker_col:max_ticker_col]) - 1
+  mean_return <- colMeans(daily_return)
+  std_return <- apply(daily_return,2,sd)
+  sharpe_ratio <- (mean_return*length(date_range) - risk_free_rate) / (std_return*sqrt(length(date_range)))
+  sharpe_ratio <- data.frame(sharpe_ratio)
+  tickers <- row.names(sharpe_ratio) 
+  sharpe_ratio$Ticker <- substr(tickers, 1,nchar(tickers)-6) 
+  return(sharpe_ratio)
+}
+beta <- cal_sharpe(ticker_range = c("A.close","ZTS.close"))
+dim(beta)
+```
+
+
+```{r}
+# Merge sharpe ratio df with sector table
+sector_table <- read.csv("SP500table.csv", header = TRUE, stringsAsFactors = FALSE)
+ticker_w_sectors <- merge(beta,sector_table,by="Ticker")
+# Get best 2 tickers in each sector
+best_sec_tickers <- data.frame()
+sector_names <- data.frame()
+best_2_performance <- function(df_beta_sector = ticker_w_sectors){
+  sectors <- split(df_beta_sector, as.factor(df_beta_sector$GICS.Sector))
+  for(i in 1:length(sectors)){
+    sort_dec <- sectors[[i]][order(sectors[[i]]$sharpe_ratio,decreasing=T),]
+    best_2 <- sort_dec[1:2, ]
+    best_sec_tickers <- rbind(best_sec_tickers, best_2 )
+  }
+  return(best_sec_tickers)
+}
+best <- best_2_performance()
+best
+# plot best 22 best tickers with their sharpe ratio
+ggplot(data=best,aes(y=sharpe_ratio,x=Ticker,color=GICS.Sector))+
+  geom_point()+
+  theme(axis.text.x=element_text(angle=45))+
+  ggtitle("Sharpe Ratio of Best 2 Tickers in Each Sector")
+```
+
+
+# Extract portfolio  
+```{r}
+data$weights_2016 <- substr(data[,'2016'],1,nchar(data[,'2016'])-1)
+data$weights_2016 <- as.numeric(data$weights_2016)/100
+# Get weights with sectors
+get_weights <- function(best_ticker_df=best, weight_df=data){
+  best_ticker_df <- best_ticker_df[order(best_ticker_df$GICS.Sector,decreasing=F), ]
+  weight_df <- weight_df[order(weight_df$sectors,decreasing=F),]
+  best_ticker_df$weights_2016 <- weight_df$weights_2016/2
+  return(best_ticker_df)
+}
+ticker_weights <- get_weights()
+
+# Select best tickers and compute net return
+select_tic <- paste(best$Ticker,".close", sep="")
+port_df <- SP_500_reshape %>% select("date",select_tic)
+net_return <- port_df
+for(i in 2:ncol(port_df)){
+    for(j in 1:nrow(port_df)){
+     net_return[j,i] <- port_df[j,i]/port_df[1,i]         
+   }
+}
+head(net_return)
+
+pr <- rowSums(net_return[,c(2,23)]*ticker_weights$weights_2016)
+pr <- (pr/pr[1])
+portfolio_df <- data.frame(Date = net_return$date, Price = pr)
+portfolio_df$Date <- as.character(portfolio_df$Date)
+```
+
+
+
+# Create plot using sliding windows
+```{r}
+plot(as.Date(portfolio_df$Date, "%Y-%m-%d"), 
+     portfolio_df$Price, type = "l", xlab = "Date", 
+     ylab = "Net Return", main = "Net Return of Sector Weights Portfolio")
+```
