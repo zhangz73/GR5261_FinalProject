@@ -9,7 +9,7 @@ output:
 
 ```{r}
 # Import sector weight data
-file <- read.csv("sector representation.csv", header = TRUE, stringsAsFactors = FALSE)
+file <- read.csv("../Data/sector representation.csv", header = TRUE, stringsAsFactors = FALSE)
 data <- file[4:14,c(1,2,12,13,14,15,16)]
 colnames(data) <- c("sectors",file[3,c(2,12,13,14,15,16)]) #c("2/26/2021","2020","2019","2018","2017","2016")
 rownames(data) <- c(1:11)
@@ -47,7 +47,7 @@ df %>%
 
 ```{r}
 # Import SP500 historical price
-SP_500 <- read.csv("SP500_Historical_Prices.csv", header = TRUE, stringsAsFactors = FALSE)
+SP_500 <- read.csv("../Data/SP500_Historical_Prices.csv", header = TRUE, stringsAsFactors = FALSE)
 
 # function to reshape the SP_500 data
 reshape_to_wide <- function(date_range = c(min(SP_500$date), max(SP_500$date)), 
@@ -120,7 +120,7 @@ dim(beta)
 
 ```{r}
 # Merge sharpe ratio df with sector table
-sector_table <- read.csv("SP500table.csv", header = TRUE, stringsAsFactors = FALSE)
+sector_table <- read.csv("../Data/SP500table.csv", header = TRUE, stringsAsFactors = FALSE)
 ticker_w_sectors <- merge(beta,sector_table,by="Ticker")
 # Get best 2 tickers in each sector
 best_sec_tickers <- data.frame()
@@ -168,8 +168,11 @@ for(i in 2:ncol(port_df)){
 }
 head(net_return)
 
-pr <- rowSums(net_return[,c(2,23)]*ticker_weights$weights_2016)
-pr <- (pr/pr[1])
+#pr <- rowSums(net_return[,c(2,23)]*ticker_weights$weights_2016)
+#pr <- (pr/pr[1])
+pr <- (as.matrix(net_return[,c(2:23)]) %*% 
+  matrix(ticker_weights$weights_2016, ncol=1)) %>% rowSums() %>% as.vector()
+pr <- pr * 100
 portfolio_df <- data.frame(Date = net_return$date, Price = pr)
 portfolio_df$Date <- as.character(portfolio_df$Date)
 ```
