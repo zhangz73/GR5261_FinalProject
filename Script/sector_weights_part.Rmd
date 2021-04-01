@@ -183,5 +183,5 @@ portfolio_df$Date <- as.character(portfolio_df$Date)
 ```{r}
 plot(as.Date(portfolio_df$Date, "%Y-%m-%d"), 
      portfolio_df$Price, type = "l", xlab = "Date", 
-     ylab = "Net Return", main = "Net Return of Sector Weights Portfolio")
+     ylab = "Portfolio Value", main = "Portfolio Value of Sector Weights Portfolio")
 ```
