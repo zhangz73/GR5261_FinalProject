@@ -55,7 +55,8 @@ data_wide %>% head()
 
 PCA
 ```{r}
-pca <- prcomp(data_wide[data_wide$date < "2018-01-01", 2:100])
+colnames(data_wide) <- str_remove(colnames(data_wide), ".close")
+pca <- prcomp(data_wide[, 2:ncol(data_wide)], scale. = T)
 print(summary(pca)$importance[,1:10])
 plot(pca)
 ```
@@ -66,6 +67,56 @@ print(pca$rotation[,1])
 print("PC2")
 print(pca$rotation[,2])
 ```
+
+Visualize PCA
+```{r}
+library(ggplot2)
+
+scores <- as.data.frame(pca$x)
+tickers <- rownames(pca$rotation) %>% str_remove(".close")
+
+# function to create a circle
+circle <- function(center = c(0, 0), npoints = 100) {
+    r = 1
+    tt = seq(0, 2 * pi, length = npoints)
+    xx = center[1] + r * cos(tt)
+    yy = center[1] + r * sin(tt)
+    return(data.frame(x = xx, y = yy))
+}
+corcir = circle(c(0, 0), npoints = 100)
+
+# create data frame with correlations between variables and PCs
+correlations = as.data.frame(cor(data_wide[,2:ncol(data_wide)], pca$x))
+# data frame with arrows coordinates
+arrows = data.frame(x1 = rep(0, 497), y1 = rep(0, 497), x2 = correlations$PC1, 
+    y2 = correlations$PC2)
+
+# geom_path will do open circles
+p <- ggplot() + geom_path(data = corcir, aes(x = x, y = y), colour = "gray65") + 
+    geom_segment(data = arrows, aes(x = x1, y = y1, xend = x2, yend = y2), colour = "gray65") + 
+    geom_text(data = correlations, aes(x = PC1, y = PC2, label = tickers)) + 
+    geom_hline(yintercept = 0, colour = "gray65") + geom_vline(xintercept = 0, 
+    colour = "gray65") + xlim(-1.1, 1.1) + ylim(-1.1, 1.1) + labs(x = "PC1 aixs", 
+    y = "PC2 axis") + ggtitle("Circle of correlations")
+p
+png("../Plots/PCA_COR.png", width=1000, height = 1000)
+print(p)
+dev.off()
+```
+
+PCA Loadings Plot
+```{r}
+library(ggfortify)
+
+p <- autoplot(pca, data = data_wide,
+         loadings = TRUE, loadings.colour = 'orange',
+         loadings.label = TRUE, loadings.label.size = 3)
+p
+png("../Plots/PCA_Loadings.png", width=1000, height=1000)
+print(p)
+dev.off()
+```
+
 
 Extract portfolio
 ```{r}
@@ -86,14 +137,28 @@ plot(as.Date(portfolio_pc2$Date, "%Y-%m-%d"),
      portfolio_pc2$NetReturn, type = "l", xlab = "Date", 
      ylab = "Net Return", main = "Net Return of PC2 Portfolio")
 ```
+Load S&P500
+```{r}
+spy <- read.csv("../Data/SPY.csv")
+spy$Date <- as.character(spy$Date)
+head(spy)
+```
+
 
 Sliding Window
 ```{r}
-year_list <- 2018:2021
+year_list <- 2018#:2021
 cash <- 100
 
-extract_portfolio <- function(pc_12, pc_weights, data){
-  pc <- pc_12[,1] * pc_weights[1] + pc_12[,2] * pc_weights[2]
+extract_portfolio <- function(pc_12, pc_weights, data, size=-1, pc_preserve){
+  if(size == -1){
+    size <- ncol(data) - 1
+  }
+  size <- min(ncol(data) - 1, size)
+  top_performing_pairs <- sort(pc_12[,1], decreasing = T)[1:size] %>% names()
+  pc <- pc_12[,1] * pc_weights[1] * pc_preserve[1] + 
+    pc_12[,2] * pc_weights[2] * pc_preserve[2]
+  pc[!names(pc) %in% top_performing_pairs] <- 0
   data_mat <- data[, colnames(data) != "date"] %>% as.matrix()
   price <- data_mat %*% matrix(pc, ncol = 1)
   if(price[1] < 0){
@@ -105,8 +170,8 @@ extract_portfolio <- function(pc_12, pc_weights, data){
   return(df)
 }
 
-get_sliding_portfolio <- function(){
-  cash_list <- c(0)
+get_sliding_portfolio <- function(pc_preserve=c(1, 1), size=-1){
+  cash_list <- c(100)
   equity_list <- c(0)
   portfolio_list <- c()
   date_list <- c()
@@ -124,7 +189,8 @@ get_sliding_portfolio <- function(){
     pca_1year <- prcomp(data_curr[, 2:ncol(data_curr)])
     stocks_combo <- extract_portfolio(pca_1year$rotation[,1:2], 
                                       pca_1year$sdev^2 / sum(pca_1year$sdev^2),
-                                      data_future)
+                                      data_future, size=size,
+                                      pc_preserve=pc_preserve)
     
     if(stocks_combo$Price[1] < 0){
       stocks_combo$Price <- -1 * stocks_combo$Price
@@ -141,21 +207,107 @@ get_sliding_portfolio <- function(){
   return(data.frame(date = date_list, portfolio = portfolio_list,
                     cash = cash_list, equity = equity_list))
 }
-df <- get_sliding_portfolio()
-#df <- df[as.character(df$date) <= "2020-01-01",]
+
+sharpe_ratio <- function(vec, date, period = 252){
+  rf <- c("2016"=0.005, "2017"=0.0111, "2018"=0.0202, "2019"=0.0222, 
+          "2020"=0.0069, "2021"=0.0016)
+  rf_lst <- c()
+  for(i in 1:(length(date) - 1)){
+    yr <- str_split(as.character(date[i]), "-")[[1]][1]
+    rf_lst <- c(rf_lst, rf[yr])
+  }
+  ret <- vec[2:length(vec)] / vec[1:(length(vec) - 1)] - 1
+  return(round((mean(ret - rf_lst / period) * period) / 
+                 (sd(ret) * sqrt(period)), 3))
+}
+
+df <- get_sliding_portfolio(pc_preserve = c(0, 1))
+png("../Plots/PC2.png", width = 500, height = 500)
 plot(as.Date(df$date, "%Y-%m-%d"), 
      df$portfolio, type = "l", xlab = "Date", 
-     ylab = "Portfolio Value", main = "Portfolio Value using PCA",
+     ylab = "Portfolio Value", 
+     main = paste0("Portfolio Value PC2 Only\nSharpe Ratio = ",
+                   sharpe_ratio(df$portfolio, df$date), "\nSPY Sharpe Ratio = ", sharpe_ratio(curr_spy$Close, curr_spy$Date)),
      col = "red")
+curr_spy <- spy[spy$Date %in% as.character(df$date), c("Date", "Close")]
+lines(as.Date(curr_spy$Date, "%Y-%m-%d"), curr_spy$Close * 100/curr_spy$Close[1],
+      col = "blue")
+legend("topleft", c("Portfolio", "SPY"), col=c("red", "blue"),
+       bg="gray", cex=0.6, lwd=3)
+dev.off()
+
+df <- get_sliding_portfolio(pc_preserve = c(1, 0))
+png("../Plots/PC1.png", width = 500, height = 500)
 plot(as.Date(df$date, "%Y-%m-%d"), 
-     df$equity, type = "l", xlab = "Date", 
-     ylab = "Equity Net Returns", main = "Equity Net Returns using PCA",
-     col = "green")
+     df$portfolio, type = "l", xlab = "Date", 
+     ylab = "Portfolio Value", 
+     main = paste0("Portfolio Value using PC1 Only\nSharpe Ratio = ",
+                   sharpe_ratio(df$portfolio, df$date), "\nSPY Sharpe Ratio = ", sharpe_ratio(curr_spy$Close, curr_spy$Date)),
+     col = "red")
+curr_spy <- spy[spy$Date %in% as.character(df$date), c("Date", "Close")]
+lines(as.Date(curr_spy$Date, "%Y-%m-%d"), curr_spy$Close * 100/curr_spy$Close[1],
+      col = "blue")
+legend("topleft", c("Portfolio", "SPY"), col=c("red", "blue"),
+       bg="gray", cex=0.6, lwd=3)
+dev.off()
+
+df <- get_sliding_portfolio(pc_preserve = c(1, 1))
+png("../Plots/PC12.png", width = 500, height = 500)
+plot(as.Date(df$date, "%Y-%m-%d"), 
+     df$portfolio, type = "l", xlab = "Date", 
+     ylab = "Portfolio Value", 
+     main = paste0("Portfolio Value using PC1 & PC2\nSharpe Ratio = ",
+                   sharpe_ratio(df$portfolio, df$date), "\nSPY Sharpe Ratio = ", sharpe_ratio(curr_spy$Close, curr_spy$Date)),
+     col = "red")
+curr_spy <- spy[spy$Date %in% as.character(df$date), c("Date", "Close")]
+lines(as.Date(curr_spy$Date, "%Y-%m-%d"), curr_spy$Close * 100/curr_spy$Close[1],
+      col = "blue")
+legend("topleft", c("Portfolio", "SPY"), col=c("red", "blue"),
+       bg="gray", cex=0.6, lwd=3)
+dev.off()
+
+#plot(as.Date(df$date, "%Y-%m-%d"), 
+ #    df$equity, type = "l", xlab = "Date", 
+  #   ylab = "Equity Net Returns", main = "Equity Net Returns using PCA\nPC2 Only",
+   #  col = "green")
 #lines(as.Date(df$date, "%Y-%m-%d"), df$cash, col="yellow")
 #lines(as.Date(df$date, "%Y-%m-%d"), df$equity, col="blue")
 #legend("topleft", c("Portfolio", "Cash", "Equity"), 
  #      col=c("red", "yellow", "blue"), lwd=3, bg="gray", cex=0.6)
 ```
+Other Strategies
+```{r}
+df <- read.csv("../Data/HedgeSectorRisk.csv")
+png("../Plots/HedgeSectorRisk.png", width = 500, height = 500)
+plot(as.Date(df$Date, "%Y-%m-%d"), 
+     df$Price, type = "l", xlab = "Date", 
+     ylab = "Portfolio Value", 
+     main = paste0("Portfolio Value Hedge Sector Risk\nSharpe Ratio = ",
+                   sharpe_ratio(df$Price, df$Date), "\nSPY Sharpe Ratio = ", sharpe_ratio(curr_spy$Close, curr_spy$Date)),
+     col = "red")
+curr_spy <- spy[spy$Date %in% as.character(df$Date), c("Date", "Close")]
+lines(as.Date(curr_spy$Date, "%Y-%m-%d"), curr_spy$Close * 100/curr_spy$Close[1],
+      col = "blue")
+legend("topleft", c("Portfolio", "SPY"), col=c("red", "blue"),
+       bg="gray", cex=0.6, lwd=3)
+dev.off()
+
+df <- read.csv("../Data/MinCorCommunity.csv")
+png("../Plots/MinCorCommunity.png", width = 500, height = 500)
+plot(as.Date(df$date, "%Y-%m-%d"), 
+     df$PortfolioValue, type = "l", xlab = "Date", 
+     ylab = "Portfolio Value", 
+     main = paste0("Portfolio Value Min Correlation Community\nPortfolio Sharpe Ratio = ",
+                   sharpe_ratio(df$PortfolioValue, df$date), "\nSPY Sharpe Ratio = ", sharpe_ratio(curr_spy$Close, curr_spy$Date)),
+     col = "red")
+curr_spy <- spy[spy$Date %in% as.character(df$date), c("Date", "Close")]
+lines(as.Date(curr_spy$Date, "%Y-%m-%d"), curr_spy$Close * 100/curr_spy$Close[1],
+      col = "blue")
+legend("topleft", c("Portfolio", "SPY"), col=c("red", "blue"),
+       bg="gray", cex=0.6, lwd=3)
+dev.off()
+```
+
 
 Min Correlation Community
 ```{r}
