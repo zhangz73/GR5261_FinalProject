@@ -1,0 +1,185 @@
+---
+title: "Trading"
+author: "Zhanhao Zhang"
+date: "4/11/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Data
+```{r}
+pc <- read.csv("../Portfolio/PC12.csv")
+head(pc)
+```
+
+## Fit AR(1) model for Geometric Brownian Motion or Ornstein-Urlenbeck Process
+```{r}
+library(itsmr)
+
+model <- ar.yw(pc$portfolio, order.max = 1)
+```
+
+## Trading on Bollinger-Bands
+```{r}
+plot(pc$portfolio, type = "l")
+```
+
+```{r}
+trading_BB <- function(price, date, window_size=7, lower_band=1, upper_band=1){
+  cash <- 100
+  portfolio_lst <- c(cash)
+  cash_lst <- c(cash)
+  equity_lst <- c(0)
+  position_lst <- c(0)
+  mean_lst <- c(0)
+  upper_band_lst <- c(0)
+  lower_band_lst <- c(0)
+  price_lst <- c(0)
+  date_lst <- date[(window_size):length(date)]
+  for(i in (window_size + 1):length(price)){
+    price_sliding <- price[(i - window_size):(i - 1)]
+    mu <- mean(price_sliding)
+    sigma <- sd(price_sliding)
+    mean_lst <- c(mean_lst, mu)
+    upper_band_lst <- c(upper_band_lst, mu + upper_band * sigma)
+    lower_band_lst <- c(lower_band_lst, mu - lower_band * sigma)
+    price_lst <- c(price_lst, price[i])
+    
+    curr_cash <- cash_lst[length(cash_lst)]
+    curr_portfolio <- portfolio_lst[length(portfolio_lst)]
+    curr_equity <- equity_lst[length(equity_lst)]
+    curr_position <- position_lst[length(position_lst)]
+    
+    curr_equity <- price[i] * curr_position
+    if(price[i] >= mu + upper_band * sigma){
+      if(curr_position > 0){
+        curr_cash <- curr_cash + curr_equity
+        curr_equity <- 0
+        curr_position <- 0
+      }
+    } else if(price[i] <= mu - lower_band * sigma){
+      new_position <- curr_cash / price[i]
+      curr_equity <- curr_equity + curr_cash
+      curr_position <- curr_position + new_position
+      curr_cash <- 0
+    }
+    curr_portfolio <- curr_cash + curr_equity
+    
+    cash_lst <- c(cash_lst, curr_cash)
+    portfolio_lst <- c(portfolio_lst, curr_portfolio)
+    equity_lst <- c(equity_lst, curr_equity)
+    position_lst <- c(position_lst, curr_position)
+  }
+  df <- data.frame(Cash = cash_lst, Portfolio = portfolio_lst,
+                    Equity = equity_lst, Position = position_lst,
+                   UpperBand = upper_band_lst, LowerBand = lower_band_lst,
+                   Mean = mean_lst, Price = price_lst, Date = date_lst)
+  df <- df[2:nrow(df),]
+  return(df)
+}
+pc_trading <- trading_BB(pc$portfolio, pc$date)
+
+plot(pc_trading$Portfolio, type = "l")
+png("../Plots/PC_BB.png", width = 1000, height = 800)
+plot(pc_trading$Price, type = "l", main = "price")
+lines(pc_trading$Mean, col = "red")
+lines(pc_trading$UpperBand, col = "blue")
+lines(pc_trading$LowerBand, col = "blue")
+dev.off()
+```
+```{r}
+library(ggplot2)
+
+png("../Plots/PC12_BB.png", width = 1000, height = 800)
+p <- ggplot(data = pc_trading, aes(x = as.Date(Date), y = Price)) +
+  geom_line(aes(color = "Price")) +
+  geom_line(aes(y = Mean, color = "Mean")) +
+  geom_ribbon(aes(ymin = LowerBand, ymax = UpperBand), alpha = 0.3,
+              color = "blue") +
+  labs(x = "Date", title = "Portfolio With Bollinger-Bands Over Time")
+print(p)
+dev.off()
+p
+```
+```{r}
+trading_plots <- function(pc_trading, strategy){
+  png(paste0("../Plots/", strategy, "_Invest.png"), width = 500, height = 500)
+  plot(as.Date(pc_trading$Date), pc_trading$Portfolio, type = "l",
+       xlab = "Date", ylab = "Investment Portfolio",
+       main = paste0("Investment Portfolio Using ", strategy))
+  dev.off()
+  png(paste0("../Plots/", strategy, "_BB.png"), width = 1000, height = 800)
+  p <- ggplot(data = pc_trading, aes(x = as.Date(Date), y = Price)) +
+  geom_line(aes(color = "Price")) +
+  geom_line(aes(y = Mean, color = "Mean")) +
+  geom_ribbon(aes(ymin = LowerBand, ymax = UpperBand), alpha = 0.3,
+              color = "blue") +
+  labs(x = "Date", title = "Portfolio With Bollinger-Bands Over Time")
+  print(p)
+  dev.off()
+}
+trading_plots(pc_trading, "PC12")
+```
+
+Min Correlation Community Trading
+```{r}
+cor_portfolio <- read.csv("../Portfolio/CorPortfolioValue.csv")
+cor_portfolio <- cor_portfolio[as.character(cor_portfolio$date) >= "2018-01-01",]
+cor_trading <- trading_BB(cor_portfolio$portfolio_value, cor_portfolio$date)
+trading_plots(cor_trading, "MinCorrelation")
+```
+
+Sector Weight Trading
+```{r}
+sec_portfolio <- read.csv("../Portfolio/sector_pred_portfolio.csv")
+years <- 2019:2021
+for(yr in years){
+  prev <- sec_portfolio[as.character(sec_portfolio$Date) <= 
+                          paste0(yr - 1, "-12-31"),]
+  curr <- sec_portfolio[as.character(sec_portfolio$Date) >= 
+                          paste0(yr, "-01-01"),]
+  curr_price <- curr$Price / 100 * prev$Price[nrow(prev)]
+  sec_portfolio[as.character(sec_portfolio$Date) >= 
+                          paste0(yr, "-01-01"),]$Price <- curr_price
+}
+sec_trading <- trading_BB(sec_portfolio$Price, sec_portfolio$Date)
+trading_plots(sec_trading, "SectorWeights")
+```
+
+Examine Mean-Reverting Property
+```{r}
+library(itsmr)
+
+m <- itsmr::arma(cor_portfolio$portfolio_value, p = 1)
+test(Resid(cor_portfolio$portfolio_value, a = m))
+
+mu <- mean(cor_portfolio$portfolio_value)
+theta <- 1 - m$phi
+sigma2 <- m$sigma2
+
+## Sim OU
+N = 1000
+sim_values <- matrix(0, nrow = N, ncol = nrow(cor_portfolio))
+sim_values[,1] <- cor_portfolio$portfolio_value[1]
+for(i in 2:ncol(sim_values)){
+  sim_values[,i] <- sim_values[,i-1] + theta*(mu - sim_values[,i-1]) + 
+    sqrt(sigma2) * rnorm(N)
+}
+upr <- apply(sim_values, 2, quantile, probs = 0.975)
+lwr <- apply(sim_values, 2, quantile, probs = 0.025)
+ou_plot_df <- data.frame(upr = upr, lwr = lwr, 
+                         value = cor_portfolio$portfolio_value,
+                         date = as.Date(cor_portfolio$date))
+png("../Plots/MinCor_OU.png", width = 1000, height = 800)
+ggplot(data = ou_plot_df, aes(x = date, y = value)) +
+  geom_line() +
+  geom_hline(yintercept = mu, color = "red") +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.2) +
+  labs(x = "Date", y = "Portfolio Value", title = "Min Correlation Portfolio",
+       subtitle = "Bounded By the 2.5% -- 97.5% Percentile of the Simulations \n of its Fitted Ornstein-Uhrlenbeck Process")
+dev.off()
+```
+

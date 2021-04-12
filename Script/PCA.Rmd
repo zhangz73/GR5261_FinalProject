@@ -147,7 +147,7 @@ head(spy)
 
 Sliding Window
 ```{r}
-year_list <- 2018#:2021
+year_list <- 2018:2021
 cash <- 100
 
 extract_portfolio <- function(pc_12, pc_weights, data, size=-1, pc_preserve){
@@ -222,6 +222,7 @@ sharpe_ratio <- function(vec, date, period = 252){
 }
 
 df <- get_sliding_portfolio(pc_preserve = c(0, 1))
+curr_spy <- spy[spy$Date %in% as.character(df$date), c("Date", "Close")]
 png("../Plots/PC2.png", width = 500, height = 500)
 plot(as.Date(df$date, "%Y-%m-%d"), 
      df$portfolio, type = "l", xlab = "Date", 
@@ -229,14 +230,15 @@ plot(as.Date(df$date, "%Y-%m-%d"),
      main = paste0("Portfolio Value PC2 Only\nSharpe Ratio = ",
                    sharpe_ratio(df$portfolio, df$date), "\nSPY Sharpe Ratio = ", sharpe_ratio(curr_spy$Close, curr_spy$Date)),
      col = "red")
-curr_spy <- spy[spy$Date %in% as.character(df$date), c("Date", "Close")]
 lines(as.Date(curr_spy$Date, "%Y-%m-%d"), curr_spy$Close * 100/curr_spy$Close[1],
       col = "blue")
 legend("topleft", c("Portfolio", "SPY"), col=c("red", "blue"),
        bg="gray", cex=0.6, lwd=3)
 dev.off()
+write.csv(df, "../Portfolio/PC2.csv", row.names = F)
 
 df <- get_sliding_portfolio(pc_preserve = c(1, 0))
+curr_spy <- spy[spy$Date %in% as.character(df$date), c("Date", "Close")]
 png("../Plots/PC1.png", width = 500, height = 500)
 plot(as.Date(df$date, "%Y-%m-%d"), 
      df$portfolio, type = "l", xlab = "Date", 
@@ -244,14 +246,15 @@ plot(as.Date(df$date, "%Y-%m-%d"),
      main = paste0("Portfolio Value using PC1 Only\nSharpe Ratio = ",
                    sharpe_ratio(df$portfolio, df$date), "\nSPY Sharpe Ratio = ", sharpe_ratio(curr_spy$Close, curr_spy$Date)),
      col = "red")
-curr_spy <- spy[spy$Date %in% as.character(df$date), c("Date", "Close")]
 lines(as.Date(curr_spy$Date, "%Y-%m-%d"), curr_spy$Close * 100/curr_spy$Close[1],
       col = "blue")
 legend("topleft", c("Portfolio", "SPY"), col=c("red", "blue"),
        bg="gray", cex=0.6, lwd=3)
 dev.off()
+write.csv(df, "../Portfolio/PC1.csv", row.names = F)
 
 df <- get_sliding_portfolio(pc_preserve = c(1, 1))
+curr_spy <- spy[spy$Date %in% as.character(df$date), c("Date", "Close")]
 png("../Plots/PC12.png", width = 500, height = 500)
 plot(as.Date(df$date, "%Y-%m-%d"), 
      df$portfolio, type = "l", xlab = "Date", 
@@ -259,12 +262,12 @@ plot(as.Date(df$date, "%Y-%m-%d"),
      main = paste0("Portfolio Value using PC1 & PC2\nSharpe Ratio = ",
                    sharpe_ratio(df$portfolio, df$date), "\nSPY Sharpe Ratio = ", sharpe_ratio(curr_spy$Close, curr_spy$Date)),
      col = "red")
-curr_spy <- spy[spy$Date %in% as.character(df$date), c("Date", "Close")]
 lines(as.Date(curr_spy$Date, "%Y-%m-%d"), curr_spy$Close * 100/curr_spy$Close[1],
       col = "blue")
 legend("topleft", c("Portfolio", "SPY"), col=c("red", "blue"),
        bg="gray", cex=0.6, lwd=3)
 dev.off()
+write.csv(df, "../Portfolio/PC12.csv", row.names = F)
 
 #plot(as.Date(df$date, "%Y-%m-%d"), 
  #    df$equity, type = "l", xlab = "Date", 
@@ -278,6 +281,8 @@ dev.off()
 Other Strategies
 ```{r}
 df <- read.csv("../Data/HedgeSectorRisk.csv")
+df <- df[as.character(df$Date) <= "2021-03-08",]
+curr_spy <- spy[spy$Date %in% as.character(df$Date), c("Date", "Close")]
 png("../Plots/HedgeSectorRisk.png", width = 500, height = 500)
 plot(as.Date(df$Date, "%Y-%m-%d"), 
      df$Price, type = "l", xlab = "Date", 
@@ -285,7 +290,6 @@ plot(as.Date(df$Date, "%Y-%m-%d"),
      main = paste0("Portfolio Value Hedge Sector Risk\nSharpe Ratio = ",
                    sharpe_ratio(df$Price, df$Date), "\nSPY Sharpe Ratio = ", sharpe_ratio(curr_spy$Close, curr_spy$Date)),
      col = "red")
-curr_spy <- spy[spy$Date %in% as.character(df$Date), c("Date", "Close")]
 lines(as.Date(curr_spy$Date, "%Y-%m-%d"), curr_spy$Close * 100/curr_spy$Close[1],
       col = "blue")
 legend("topleft", c("Portfolio", "SPY"), col=c("red", "blue"),
@@ -293,6 +297,8 @@ legend("topleft", c("Portfolio", "SPY"), col=c("red", "blue"),
 dev.off()
 
 df <- read.csv("../Data/MinCorCommunity.csv")
+df <- df[as.character(df$date) <= "2021-03-08",]
+curr_spy <- spy[spy$Date %in% as.character(df$date), c("Date", "Close")]
 png("../Plots/MinCorCommunity.png", width = 500, height = 500)
 plot(as.Date(df$date, "%Y-%m-%d"), 
      df$PortfolioValue, type = "l", xlab = "Date", 
@@ -300,7 +306,6 @@ plot(as.Date(df$date, "%Y-%m-%d"),
      main = paste0("Portfolio Value Min Correlation Community\nPortfolio Sharpe Ratio = ",
                    sharpe_ratio(df$PortfolioValue, df$date), "\nSPY Sharpe Ratio = ", sharpe_ratio(curr_spy$Close, curr_spy$Date)),
      col = "red")
-curr_spy <- spy[spy$Date %in% as.character(df$date), c("Date", "Close")]
 lines(as.Date(curr_spy$Date, "%Y-%m-%d"), curr_spy$Close * 100/curr_spy$Close[1],
       col = "blue")
 legend("topleft", c("Portfolio", "SPY"), col=c("red", "blue"),
