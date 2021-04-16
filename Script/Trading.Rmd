@@ -152,9 +152,31 @@ trading_plots(sec_trading, "SectorWeights")
 Examine Mean-Reverting Property
 ```{r}
 library(itsmr)
+library(dynlm)
+library(FinTS)
+library(fGarch)
 
 m <- itsmr::arma(cor_portfolio$portfolio_value, p = 1)
-test(Resid(cor_portfolio$portfolio_value, a = m))
+res <- Resid(cor_portfolio$portfolio_value, a = m)
+test(res)
+
+res_sq <- ts(res^2)
+
+arch_model <- dynlm(res_sq ~ L(res_sq), data = res_sq)
+summary(arch_model)
+
+ArchTest(res, lags = 1, demean = T)
+arch.fit <- garchFit(~garch(1, 0), data = res, trace = F)
+summary(arch.fit)
+
+arch_data <- data.frame(ht = arch.fit@h.t, date = cor_portfolio$date)
+
+png("../Plots/ArchVar.png", width = 1000, height = 800)
+ggplot(arch_data, aes(x = as.Date(date), y = ht)) +
+  geom_line(col = '#ff9933') +
+  labs(x = "Date", y = "Conditional Variance", 
+       title = "Conditional Variance from GARCH")
+dev.off()
 
 mu <- mean(cor_portfolio$portfolio_value)
 theta <- 1 - m$phi
