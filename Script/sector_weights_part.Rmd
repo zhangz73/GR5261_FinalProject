@@ -7,6 +7,7 @@ output:
   html_document: default
 ---
 
+# Compare sector weights 2016-2021
 ```{r}
 # Import sector weight data
 file <- read.csv("../Data/sector representation.csv", header = TRUE, stringsAsFactors = FALSE)
@@ -31,17 +32,6 @@ ggplot(data=df,aes(y=sector_weights,x=time,color=sectors,group=sectors))+
   geom_point()+
   geom_line()+
   labs(x = "Time(year)", y = "Sector Weights(%)", title = "Sector Weights from 2016 to 2021")
-```
-
-```{r}
-# Create portfolio according to the sector weights
-
-# Calculate average sector weights from 2016 to 2021
-library(dplyr)
-df %>%
-  group_by(sectors) %>%
-  summarize(mean_weight = mean(sector_weights),.groups = 'drop')
-
 ```
 
 
@@ -95,10 +85,10 @@ get_index <- function(date_range = c("2016-11-10", "2021-03-09"), ticker_range =
 get_index()
 ```
 
-
+# Choose stocks for the portfolio
 ```{r}
 # calculate sharpe ratio
-cal_sharpe <- function(date_range = c("2016-11-10", "2021-03-09"), ticker_range = c("A.close","AAL.close"), risk_free_rate = 0.01){
+cal_sharpe <- function(date_range = c("2017-01-03", "2017-12-29"), ticker_range = c("A.close","ZTS.close"), risk_free_rate = 0.0111){
     min_date_row <- get_index(date_range,ticker_range)$rows[1]
     max_date_row <- get_index(date_range,ticker_range)$rows[2]
     min_ticker_col <- get_index(date_range,ticker_range)$cols[1]
@@ -107,25 +97,27 @@ cal_sharpe <- function(date_range = c("2016-11-10", "2021-03-09"), ticker_range 
       (SP_500_reshape[(min_date_row+1):max_date_row, min_ticker_col:max_ticker_col] / SP_500_reshape[min_date_row:(max_date_row-1), min_ticker_col:max_ticker_col]) - 1
   mean_return <- colMeans(daily_return)
   std_return <- apply(daily_return,2,sd)
-  sharpe_ratio <- (mean_return*length(date_range) - risk_free_rate) / (std_return*sqrt(length(date_range)))
+  sharpe_ratio <- (mean_return*252 - risk_free_rate) / (std_return*sqrt(252))
   sharpe_ratio <- data.frame(sharpe_ratio)
   tickers <- row.names(sharpe_ratio) 
   sharpe_ratio$Ticker <- substr(tickers, 1,nchar(tickers)-6) 
   return(sharpe_ratio)
 }
-beta <- cal_sharpe(ticker_range = c("A.close","ZTS.close"))
-dim(beta)
+beta_2017 <- cal_sharpe(ticker_range = c("A.close","ZTS.close"))
+dim(beta_2017)
 ```
+
+
 
 
 ```{r}
 # Merge sharpe ratio df with sector table
 sector_table <- read.csv("../Data/SP500table.csv", header = TRUE, stringsAsFactors = FALSE)
-ticker_w_sectors <- merge(beta,sector_table,by="Ticker")
+ticker_w_sectors_2017 <- merge(beta_2017,sector_table,by="Ticker")
 # Get best 2 tickers in each sector
-best_sec_tickers <- data.frame()
-sector_names <- data.frame()
-best_2_performance <- function(df_beta_sector = ticker_w_sectors){
+best_2_performance <- function(df_beta_sector = ticker_w_sectors_2017){
+  best_sec_tickers <- data.frame()
+  #sector_names <- data.frame()
   sectors <- split(df_beta_sector, as.factor(df_beta_sector$GICS.Sector))
   for(i in 1:length(sectors)){
     sort_dec <- sectors[[i]][order(sectors[[i]]$sharpe_ratio,decreasing=T),]
@@ -134,32 +126,34 @@ best_2_performance <- function(df_beta_sector = ticker_w_sectors){
   }
   return(best_sec_tickers)
 }
-best <- best_2_performance()
-best
+best_2017 <- best_2_performance()
+best_2017
 # plot best 22 best tickers with their sharpe ratio
-ggplot(data=best,aes(y=sharpe_ratio,x=Ticker,color=GICS.Sector))+
+ggplot(data=best_2017,aes(y=sharpe_ratio,x=Ticker,color=GICS.Sector))+
   geom_point()+
   theme(axis.text.x=element_text(angle=45))+
-  ggtitle("Sharpe Ratio of Best 2 Tickers in Each Sector")
+  ggtitle("Sharpe Ratio of Best 2 Tickers in Each Sector in 2017")
 ```
 
 
 # Extract portfolio  
 ```{r}
-data$weights_2016 <- substr(data[,'2016'],1,nchar(data[,'2016'])-1)
-data$weights_2016 <- as.numeric(data$weights_2016)/100
-# Get weights with sectors
-get_weights <- function(best_ticker_df=best, weight_df=data){
+data$weights_2017 <- substr(data[,'2017'],1,nchar(data[,'2017'])-1)
+data$weights_2017 <- as.numeric(data$weights_2017)/100
+# Get weights for each tickers
+get_weights <- function(best_ticker_df=best_2017,weight_df=data, weight=data$weights_2017){
   best_ticker_df <- best_ticker_df[order(best_ticker_df$GICS.Sector,decreasing=F), ]
   weight_df <- weight_df[order(weight_df$sectors,decreasing=F),]
-  best_ticker_df$weights_2016 <- weight_df$weights_2016/2
+  best_ticker_df$weights <- weight/2
   return(best_ticker_df)
 }
-ticker_weights <- get_weights()
+ticker_weights_2017 <- get_weights()
 
 # Select best tickers and compute net return
-select_tic <- paste(best$Ticker,".close", sep="")
-port_df <- SP_500_reshape %>% select("date",select_tic)
+select_tic_2017 <- paste(best_2017$Ticker,".close", sep="")
+port_df <- SP_500_reshape %>% select("date",select_tic_2017)
+index <- as.numeric(rownames(SP_500_reshape[SP_500_reshape$date=='2018-01-02',]))
+port_df <- port_df[index:1087,]
 net_return <- port_df
 for(i in 2:ncol(port_df)){
     for(j in 1:nrow(port_df)){
@@ -168,10 +162,8 @@ for(i in 2:ncol(port_df)){
 }
 head(net_return)
 
-#pr <- rowSums(net_return[,c(2,23)]*ticker_weights$weights_2016)
-#pr <- (pr/pr[1])
 pr <- (as.matrix(net_return[,c(2:23)]) %*% 
-  matrix(ticker_weights$weights_2016, ncol=1)) %>% rowSums() %>% as.vector()
+  matrix(ticker_weights_2017$weights, ncol=1)) %>% rowSums() %>% as.vector()
 pr <- pr * 100
 portfolio_df <- data.frame(Date = net_return$date, Price = pr)
 portfolio_df$Date <- as.character(portfolio_df$Date)
@@ -179,9 +171,178 @@ portfolio_df$Date <- as.character(portfolio_df$Date)
 
 
 
-# Create plot using sliding windows
+# Create plot of portfolio performance using data of 2017
 ```{r}
 plot(as.Date(portfolio_df$Date, "%Y-%m-%d"), 
      portfolio_df$Price, type = "l", xlab = "Date", 
-     ylab = "Portfolio Value", main = "Portfolio Value of Sector Weights Portfolio")
+     ylab = "Portfolio Value", main = "Portfolio Value of 2017 Sector Weights Portfolio")
+```
+
+
+# Calculate sharpe ratio for the portfolio
+```{r}
+sharpe_ratio <- function(vec, date, period = 252){
+  rf <- c("2016"=0.005, "2017"=0.0111, "2018"=0.0202, "2019"=0.0222, 
+          "2020"=0.0069, "2021"=0.0016)
+  rf_lst <- c()
+  for(i in 1:(length(date) - 1)){
+    yr <- str_split(as.character(date[i]), "-")[[1]][1]
+    rf_lst <- c(rf_lst, rf[yr])
+  }
+  ret <- vec[2:length(vec)] / vec[1:(length(vec) - 1)] - 1
+  return(round((mean(ret - rf_lst / period) * period) / 
+                 (sd(ret) * sqrt(period)), 3))
+}
+sharpe_ratio(vec=portfolio_df$Price,date=portfolio_df$Date)
+```
+
+
+
+# Sliding windows part  
+## Get training parameters
+```{r}
+###  2017 training parameters
+beta_2017 <- cal_sharpe(date_range = c("2017-01-03", "2017-12-29"),  risk_free_rate = 0.0111)
+ticker_w_sectors_2017 <- merge(beta_2017,sector_table,by="Ticker")
+#  Get best 2 tickers in each sector
+best_2017 <- best_2_performance(df_beta_sector = ticker_w_sectors_2017)
+#  extract portfolio
+data$weights_2017 <- substr(data[,'2017'],1,nchar(data[,'2017'])-1)
+data$weights_2017 <- as.numeric(data$weights_2017)/100
+# Get weights for each tickers
+ticker_weights_2017 <- get_weights()
+
+
+###  2018 training parameters
+beta_2018 <- cal_sharpe(date_range = c("2018-01-02", "2018-12-31"),  risk_free_rate =0.0202)
+#dim(beta_2018)
+ticker_w_sectors_2018 <- merge(beta_2018,sector_table,by="Ticker")
+#dim(ticker_w_sectors_2018)
+#  Get best 2 tickers in each sector
+best_2018 <- best_2_performance(df_beta_sector = ticker_w_sectors_2018)
+best_2018
+#  extract portfolio
+data$weights_2018 <- substr(data[,'2018'],1,nchar(data[,'2018'])-1)
+data$weights_2018 <- as.numeric(data$weights_2018)/100
+# Get weights for each tickers
+ticker_weights_2018 <- get_weights(best_ticker_df=best_2018, weight=data$weights_2018)
+
+
+###  2019 training parameters
+beta_2019 <- cal_sharpe(date_range = c("2019-01-02", "2019-12-31"),  risk_free_rate =0.0222)
+#dim(beta_2019)
+ticker_w_sectors_2019 <- merge(beta_2019,sector_table,by="Ticker")
+#dim(ticker_w_sectors_2019)
+#  Get best 2 tickers in each sector
+best_2019 <- best_2_performance(df_beta_sector = ticker_w_sectors_2019)
+best_2019
+#  extract portfolio
+data$weights_2019 <- substr(data[,'2019'],1,nchar(data[,'2019'])-1)
+data$weights_2019 <- as.numeric(data$weights_2019)/100
+# Get weights for each tickers
+ticker_weights_2019 <- get_weights(best_ticker_df=best_2019, weight=data$weights_2019)
+
+
+###  2020 training parameters
+beta_2020 <- cal_sharpe(date_range = c("2020-01-02", "2020-12-31"),  risk_free_rate =0.0069)
+dim(beta_2020)
+ticker_w_sectors_2020 <- merge(beta_2020,sector_table,by="Ticker")
+dim(ticker_w_sectors_2020)
+#  Get best 2 tickers in each sector
+best_2020 <- best_2_performance(df_beta_sector = ticker_w_sectors_2020)
+best_2020
+#  extract portfolio
+data$weights_2020 <- substr(data[,'2020'],1,nchar(data[,'2020'])-1)
+data$weights_2020 <- as.numeric(data$weights_2020)/100
+# Get weights for each tickers
+ticker_weights_2020 <- get_weights(best_ticker_df=best_2020, weight=data$weights_2020)
+```
+
+## Calculate net return and predict porfolio
+```{r}
+#  Predict 2018 using 2017 data
+## Select best tickers and compute net return for 2018 data
+select_tic_2018 <- paste(best_2017$Ticker,".close", sep="")
+rows_2018 <- get_index(date_range = c("2018-01-02", "2018-12-31"))$rows
+df_2018 <- SP_500_reshape[rows_2018[1]:rows_2018[2],]
+port_df_2018 <- df_2018 %>% select("date",all_of(select_tic_2018))
+net_return_2018 <- port_df_2018
+for(i in 2:ncol(port_df_2018)){
+    for(j in 1:nrow(port_df_2018)){
+     net_return_2018[j,i] <- port_df_2018[j,i]/port_df_2018[1,i]         
+   }
+}
+head(net_return_2018)
+pr_2018 <- (as.matrix(net_return_2018[,c(2:23)]) %*% 
+  matrix(ticker_weights_2017$weights, ncol=1)) %>% rowSums() %>% as.vector()
+pr_2018 <- pr_2018 * 100
+
+#  Predict 2019 using 2018 data
+#Select best tickers and compute net return for 2019 data
+select_tic_2019 <- paste(best_2018$Ticker,".close", sep="")
+rows_2019 <- get_index(date_range = c("2019-01-02", "2019-12-31"))$rows
+df_2019 <- SP_500_reshape[rows_2019[1]:rows_2019[2],]
+port_df_2019 <- df_2019 %>% select("date",all_of(select_tic_2019))
+net_return_2019 <- port_df_2019
+for(i in 2:ncol(port_df_2019)){
+    for(j in 1:nrow(port_df_2019)){
+     net_return_2019[j,i] <- port_df_2019[j,i]/port_df_2019[1,i]         
+   }
+}
+head(net_return_2019)
+pr_2019 <- (as.matrix(net_return_2019[,c(2:23)]) %*% 
+  matrix(ticker_weights_2018$weights, ncol=1)) %>% rowSums() %>% as.vector()
+pr_2019 <- pr_2019 * 100
+
+#  Predict 2020 using 2019 data
+## Select best tickers and compute net return for 2020 data
+select_tic_2020 <- paste(best_2019$Ticker,".close", sep="")
+rows_2020 <- get_index(date_range = c("2020-01-02", "2020-12-31"))$rows
+df_2020 <- SP_500_reshape[rows_2020[1]:rows_2020[2],]
+port_df_2020 <- df_2020 %>% select("date",all_of(select_tic_2020))
+net_return_2020 <- port_df_2020
+for(i in 2:ncol(port_df_2020)){
+    for(j in 1:nrow(port_df_2020)){
+     net_return_2020[j,i] <- port_df_2020[j,i]/port_df_2020[1,i]         
+   }
+}
+head(net_return_2020)
+pr_2020 <- (as.matrix(net_return_2020[,c(2:23)]) %*% 
+  matrix(ticker_weights_2019$weights, ncol=1)) %>% rowSums() %>% as.vector()
+pr_2020 <- pr_2020 * 100
+
+#  Predict 2021 using 2020 data
+## Select best tickers and compute net return for 2021 data
+select_tic_2021 <- paste(best_2020$Ticker,".close", sep="")
+rows_2021 <- get_index(date_range = c("2021-01-04","2021-03-09"))$rows
+df_2021 <- SP_500_reshape[rows_2021[1]:rows_2021[2],]
+port_df_2021 <- df_2021 %>% select("date",all_of(select_tic_2021))
+net_return_2021 <- port_df_2021
+for(i in 2:ncol(port_df_2021)){
+    for(j in 1:nrow(port_df_2021)){
+     net_return_2021[j,i] <- port_df_2021[j,i]/port_df_2021[1,i]         
+   }
+}
+head(net_return_2021)
+pr_2021 <- (as.matrix(net_return_2021[,c(2:23)]) %*% 
+  matrix(ticker_weights_2020$weights, ncol=1)) %>% rowSums() %>% as.vector()
+pr_2021 <- pr_2021 * 100
+
+```
+
+
+```{r}
+# Combine all predicted prices together and create predicted portfolio
+pred_pr <- c(pr_2018,pr_2019,pr_2020,pr_2021)
+pred_portfolio_df <- data.frame(Date = net_return$date, Price = pred_pr)
+pred_portfolio_df$Date <- as.character(pred_portfolio_df$Date)
+```
+
+
+## Sliding windows plot 
+```{r}
+# Use all previous sector weights
+plot(as.Date(pred_portfolio_df$Date, "%Y-%m-%d"), 
+     pred_portfolio_df$Price, type = "l", xlab = "Date", 
+     ylab = "Portfolio Value", main = "Portfolio Value of Predicted Weights Based on Sectors")
 ```
