@@ -1,0 +1,205 @@
+---
+title: "GR5261Project"
+author: "Zhanhao Zhang"
+date: "3/23/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load Data
+```{r}
+library(data.table)
+library(dplyr)
+
+data <- fread("SP500_Historical_Prices.csv", header = T, sep = ",") %>%
+  data.frame()
+head(data)
+data <- read.csv("SP500_Historical_Prices.csv", header = T, sep = ",")
+head(data)
+```
+
+Reshape the data
+```{r}
+reshape_to_wide <- function(date_range = c(min(data$date), max(data$date)), 
+                            colname = "close", ticker_range = data$ticker,
+                            min_date = "2017-01-01"){
+  tickers <- ticker_range %>% unique() %>% as.character()
+  if(TRUE){ #length(tickers) <= 2){
+    df_ret <- NULL
+    for(symbol in tickers){
+      df_curr <- data[(data$ticker == symbol) & (data$date >= date_range[1]) &
+                         (data$date <= date_range[2]), c("date", colname)]
+      colnames(df_curr) <- c("date", paste(symbol, colname, sep = "."))
+      if(min(df_curr$date) <= min_date){
+        if(is.null(df_ret)){
+          df_ret <- df_curr
+        } else{
+          df_ret <- merge(df_ret, df_curr, by = "date")
+        }
+      }
+    }
+  } else{
+    mid <- as.integer(length(tickers) / 2)
+    df_left <- reshape_to_wide(date_range = date_range, colname = colname,
+                               ticker_range = tickers[1:mid])
+    df_right <- reshape_to_wide(date_range = date_range, colname = colname,
+                               ticker_range = tickers[(mid+1):length(tickers)])
+    df_ret <- merge(df_left, df_right, by = "date")
+  }
+  return(df_ret)
+}
+
+data_wide <- reshape_to_wide()
+data_wide %>% head()
+```
+
+
+
+Min Correlation Community
+```{r}
+library(stringr)
+
+get_min_corr_community <- function(cor_matrix, size=20){
+  cor_matrix <- abs(cor_matrix)
+  n <- nrow(cor_matrix)
+  #tickers <- str_remove(rownames(cor_matrix), ".close")
+  rownames(cor_matrix) <- rownames(cor_matrix)
+  colnames(cor_matrix) <- rownames(cor_matrix)
+  min_pair_idx <- which.min(cor_matrix)
+  cluster <- c(rownames(cor_matrix)[min_pair_idx %% n], 
+               rownames(cor_matrix)[as.integer((min_pair_idx - 1) / n) + 1])
+  for(i in 3:size){
+    cluster_corr <- apply(cor_matrix[cluster,], 2, max)
+    min_stock_idx <- which.min(cluster_corr)
+    min_stock <- rownames(cor_matrix)[min_stock_idx]
+    cluster <- c(cluster, min_stock)
+  }
+  return(cluster)
+}
+
+
+#Training set in 2017
+new1 <- data_wide
+
+as.Date(new1$date, format = "%Y-%m-%d")
+new1$ddate <- as.Date(new1$date, format = "%Y-%m-%d")
+#in 2017
+sub_data_wide <- subset(new1, format.Date(date, "%Y")=="2017")
+
+
+cor_matrix <- cor(sub_data_wide[,2:ncol(data_wide)])
+#To get 20 lowest correlation stocks in 2017
+min <- get_min_corr_community(cor_matrix, size=20)
+
+#To get data since 2018
+#now_sub_data <- subset(data_wide, format.Date(date, "%Y")==c("2018","2019","2020","2021"))
+now_sub_data = data_wide[as.character(data_wide$date) >= "2018-01-01",]
+new_data <- now_sub_data[,c("date",min)]
+
+
+net_return <- new_data
+for(i in 2:ncol(new_data)){
+  for(j in 1:nrow(new_data)){
+    net_return[j,i] = (new_data[j,i])/new_data[1,i]
+  }
+}
+
+min_net_return <- net_return[,c(min)]
+w = 1/20
+gross_p = rowSums(min_net_return[, min]*w)
+value_p = (gross_p/gross_p[1])*100 #Portfolio value
+min_net_return$gross_p <- gross_p
+min_net_return$value_p <- value_p
+#value_p = 100*exp(cumsum(gross_p)) # portfolio value
+#plot(v_p, type="l",xlab="Time",ylab="Portfolio Value")
+
+
+#col_sum <- NULL
+#for(i in 1:nrow(net_return_out)){
+#  col_sum[i] <- sum(net_return_out[i,-1])
+#}
+
+#Plot graph
+plot(as.Date(net_return$date, "%Y-%m-%d"), 
+     value_p, type = "l", xlab = "Date", 
+     ylab = "Portfolio Value", main = "Portfolio Value of Clustering Portfolio", col = "red")
+
+
+```
+```{r}
+#Calculate sharpe ratio
+sharpe_ratio <- function(vec, date, period = 252){
+  rf <- c("2016"=0.005, "2017"=0.0111, "2018"=0.0202, "2019"=0.0222, 
+          "2020"=0.0069, "2021"=0.0016)
+  rf_lst <- c()
+  for(i in 1:(length(date) - 1)){
+    yr <- str_split(as.character(date[i]), "-")[[1]][1]
+    rf_lst <- c(rf_lst, rf[yr])
+  }
+  ret <- vec[2:length(vec)] / vec[1:(length(vec) - 1)] - 1
+  return(round((mean(ret - rf_lst / period) * period) / 
+                 (sd(ret) * sqrt(period)), 3))
+}
+sharpe_ratio(gross_p, min_net_return$date)
+
+
+```
+
+Sliding window
+```{r}
+
+
+# stock price in 2017
+sub_data_wide <- subset(data_wide, format.Date(date, "%Y")=="2017")
+data_17 <- sub_data_wide[c("date",min)]
+
+#portfolio value = residual of Linear Regression in 2017
+lm_17 <- lm(VZ.close~.-VZ.close, data = data_17[-1])
+output_17 <-lm_17$coefficients[1]+lm_17$residuals
+
+value_p_17 <- output_17/output_17[1]*100
+
+#net return in 2018
+new <- data_wide
+new$date <- as.Date(new$date, format = "%Y-%m-%d")
+
+sub_data_new <- subset(new, format.Date(date, "%Y")==2018)
+  data_new <- sub_data_new[c("date",min)]
+  lm_18 <- lm(VZ.close~.-VZ.close, data = data_new[-1])
+  output_18 <-lm_18$coefficients[1]+lm_18$residuals
+  value_p_18 <- output_18/output_18[1] * 100
+
+  # net return in 2019
+sub_data_new_19 <- subset(new, format.Date(date, "%Y")==2019)
+  data_new_19 <- sub_data_new_19[c("date",min)]
+  lm_19 <- lm(VZ.close~.-VZ.close, data = data_new_19[-1])
+  output_19 <-lm_19$coefficients[1]+lm_19$residuals
+  value_p_19 <-output_19/output_19[1] * 100
+
+  
+#net return in  2020
+sub_data_new_20 <- subset(new, format.Date(date, "%Y")==2020)
+  data_new_20 <- sub_data_new_20[c("date",min)]
+  lm_20 <- lm(VZ.close~.-VZ.close, data = data_new_20[-1])
+  output_20 <-lm_20$coefficients[1]+lm_20$residuals
+  value_p_20 <-output_20/output_20[1] * 100
+#net return in  2021
+sub_data_new_21 <- subset(new, format.Date(date, "%Y")==2021)
+  data_new_21 <- sub_data_new_21[c("date",min)]
+  lm_21 <- lm(VZ.close~.-VZ.close, data = data_new_21[-1])
+  output_21 <-lm_21$coefficients[1]+lm_21$residuals
+  value_p_21 <-output_21/output_21[1] * 100
+  
+new_value_p <- c(value_p_17,value_p_18,value_p_19,value_p_20,value_p_21)
+final_data <- data_wide[as.character(data_wide$date) >= "2017-01-01",c("date",min)]  
+
+final_data$portfolio_value <- new_value_p
+
+
+plot(as.Date(final_data$date, "%Y-%m-%d"), 
+     new_value_p, type = "l", xlab = "Date", 
+     ylab = "Portfolio Value", main = "Portfolio Value of Clustering Portfolio", col = "red")
+```
