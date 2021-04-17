@@ -28,6 +28,19 @@ plot(pc$portfolio, type = "l")
 ```
 
 ```{r}
+sharpe_ratio <- function(vec, date, period = 252){
+  rf <- c("2016"=0.005, "2017"=0.0111, "2018"=0.0202, "2019"=0.0222, 
+          "2020"=0.0069, "2021"=0.0016)
+  rf_lst <- c()
+  for(i in 1:(length(date) - 1)){
+    yr <- str_split(as.character(date[i]), "-")[[1]][1]
+    rf_lst <- c(rf_lst, rf[yr])
+  }
+  ret <- vec[2:length(vec)] / vec[1:(length(vec) - 1)] - 1
+  return(round((mean(ret - rf_lst / period) * period) / 
+                 (sd(ret) * sqrt(period)), 3))
+}
+
 trading_BB <- function(price, date, window_size=7, lower_band=1, upper_band=1){
   cash <- 100
   portfolio_lst <- c(cash)
@@ -109,9 +122,10 @@ trading_plots <- function(pc_trading, strategy){
   png(paste0("../Plots/", strategy, "_Invest.png"), width = 500, height = 500)
   plot(as.Date(pc_trading$Date), pc_trading$Portfolio, type = "l",
        xlab = "Date", ylab = "Investment Portfolio",
-       main = paste0("Investment Portfolio Using ", strategy))
+       main = paste0("Investment Portfolio Using ", strategy, "\nSharpe Ratio = ",
+                     sharpe_ratio(pc_trading$Portfolio, pc_trading$Date)))
   dev.off()
-  png(paste0("../Plots/", strategy, "_BB.png"), width = 1000, height = 800)
+  png(paste0("../Plots/", strategy, "_BB.png"), width = 500, height = 500)
   p <- ggplot(data = pc_trading, aes(x = as.Date(Date), y = Price)) +
   geom_line(aes(color = "Price")) +
   geom_line(aes(y = Mean, color = "Mean")) +
@@ -149,6 +163,14 @@ sec_trading <- trading_BB(sec_portfolio$Price, sec_portfolio$Date)
 trading_plots(sec_trading, "SectorWeights")
 ```
 
+S&P 500 Trading
+```{r}
+sp500_portfolio <- read.csv("../Data/SPY.csv")
+sp500_portfolio <- sp500_portfolio[as.character(sp500_portfolio$Date) >= "2018-01-01",]
+sp500_trading <- trading_BB(sp500_portfolio$Close, sp500_portfolio$Date)
+trading_plots(sp500_trading, "S&P 500")
+```
+
 Examine Mean-Reverting Property
 ```{r}
 library(itsmr)
@@ -159,6 +181,23 @@ library(fGarch)
 m <- itsmr::arma(cor_portfolio$portfolio_value, p = 1)
 res <- Resid(cor_portfolio$portfolio_value, a = m)
 test(res)
+
+png("../Plots/ACF_res.png", width=500, height=500)
+acf(res, main = "ACF")
+dev.off()
+
+png("../Plots/PACF_res.png", width=500, height=500)
+pacf(res, main = "PACF")
+dev.off()
+
+png("../Plots/Res_res.png", width=500, height=500)
+plot(res, main = "Residuals")
+abline(h=0, col="red")
+dev.off()
+
+png("../Plots/QQ_res.png", width=500, height=500)
+qqnorm(res)
+dev.off()
 
 res_sq <- ts(res^2)
 
